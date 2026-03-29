@@ -200,7 +200,7 @@ list_usb_devices() {
 }
 
 interactive_menu_supported() {
-  command_exists whiptail && [[ -t 0 && -t 1 ]]
+  command_exists whiptail && [[ -r /dev/tty && -w /dev/tty ]]
 }
 
 storage_names() {
@@ -416,7 +416,7 @@ prompt_value() {
   local default_value="$2"
   local input=""
 
-  read -r -p "${prompt} [${default_value}]: " input || true
+  read -r -p "${prompt} [${default_value}]: " input </dev/tty || true
   if [[ -z "$input" ]]; then
     printf '%s\n' "$default_value"
   else
@@ -434,7 +434,7 @@ prompt_yes_no() {
     suffix="[Y/n]"
   fi
 
-  read -r -p "${prompt} ${suffix}: " answer || true
+  read -r -p "${prompt} ${suffix}: " answer </dev/tty || true
   answer="${answer:-$default_answer}"
   case "$answer" in
     y|Y|yes|YES) return 0 ;;
@@ -446,20 +446,20 @@ menu_choice() {
   local title="$1"
   local prompt="$2"
   shift 2
-  whiptail --backtitle "CUBE OS Proxmox Installer" --title "$title" --menu "$prompt" 20 78 10 "$@" 3>&1 1>&2 2>&3
+  whiptail --backtitle "CUBE OS Proxmox Installer" --title "$title" --menu "$prompt" 20 78 10 "$@" 3>&1 1>&2 2>&3 </dev/tty
 }
 
 input_box() {
   local title="$1"
   local prompt="$2"
   local default_value="$3"
-  whiptail --backtitle "CUBE OS Proxmox Installer" --title "$title" --inputbox "$prompt" 10 78 "$default_value" 3>&1 1>&2 2>&3
+  whiptail --backtitle "CUBE OS Proxmox Installer" --title "$title" --inputbox "$prompt" 10 78 "$default_value" 3>&1 1>&2 2>&3 </dev/tty
 }
 
 yesno_box() {
   local title="$1"
   local prompt="$2"
-  if whiptail --backtitle "CUBE OS Proxmox Installer" --title "$title" --yesno "$prompt" 10 78; then
+  if whiptail --backtitle "CUBE OS Proxmox Installer" --title "$title" --yesno "$prompt" 10 78 </dev/tty; then
     return 0
   fi
   return 1
@@ -650,7 +650,7 @@ run_prompt_setup() {
   printf '  5) Download from a custom URL\n'
 
   local source_choice=""
-  read -r -p "Select an option [1]: " source_choice || true
+  read -r -p "Select an option [1]: " source_choice </dev/tty || true
   source_choice="${source_choice:-1}"
 
   case "$source_choice" in
