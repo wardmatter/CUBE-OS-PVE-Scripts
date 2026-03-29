@@ -184,6 +184,15 @@ vmid_exists() {
   qm status "$1" >/dev/null 2>&1
 }
 
+get_imported_disk_ref() {
+  local vmid="$1"
+  local disk_ref=""
+
+  disk_ref="$(qm config "$vmid" | awk -F': ' '/^unused[0-9]+: / {print $2}' | tail -n1 | cut -d, -f1)"
+  [[ -n "$disk_ref" ]] || fail "Could not find the imported disk for VM ${vmid}"
+  printf '%s\n' "$disk_ref"
+}
+
 list_storages() {
   require_command pvesm
   pvesm status
@@ -999,6 +1008,8 @@ confirm_plan() {
 }
 
 create_vm() {
+  local imported_disk_ref=""
+
   next_step "Creating Proxmox VM"
   run_cmd qm create "$VMID" \
     --name "$NAME" \
@@ -1022,7 +1033,9 @@ create_vm() {
   run_cmd qm importdisk "$VMID" "$IMAGE_PATH" "$STORAGE" --format raw
 
   next_step "Configuring boot disk and console"
-  run_cmd qm set "$VMID" --"${DISK_INTERFACE}" "${STORAGE}:vm-${VMID}-disk-0"
+  imported_disk_ref="$(get_imported_disk_ref "$VMID")"
+  log_info "Imported disk: ${imported_disk_ref}"
+  run_cmd qm set "$VMID" --"${DISK_INTERFACE}" "${imported_disk_ref}"
   run_cmd qm set "$VMID" --boot "order=${DISK_INTERFACE}"
   run_cmd qm set "$VMID" --vga std
 }
