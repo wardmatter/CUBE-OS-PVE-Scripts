@@ -44,12 +44,12 @@ By default, the script creates a VM with:
 - `4096` MB RAM
 - `2` CPU cores
 - Network bridge `vmbr0`
-- Disk storage `local-lvm`
+- Disk storage `local`
 - CPU type `host`
 - Machine type `q35`
-- Boot disk on `scsi0`
+- Boot disk on `sata0`
 - OVMF / UEFI firmware with an EFI disk
-- Serial console enabled
+- Standard Proxmox VGA console
 
 ## Quick Start
 
@@ -80,7 +80,7 @@ sudo ./pve-create-cube-os.sh --download-latest --usb 10c4:ea60 --start
 Run the script directly from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wardmatter/CUBE-OS-PVE-Scripts/main/pve-create-cube-os.sh | bash -s -- --download-latest --storage local-lvm --efi-storage local-lvm --bridge vmbr0 --start
+curl -fsSL https://raw.githubusercontent.com/wardmatter/CUBE-OS-PVE-Scripts/main/pve-create-cube-os.sh | bash -s -- --download-latest --storage local --efi-storage local --disk-interface sata0 --bridge vmbr0 --start
 ```
 
 Launch the guided setup:
@@ -116,11 +116,11 @@ sudo ./pve-create-cube-os.sh --download-latest --dry-run --show-config
 | `--memory MB` | Memory in MB | `4096` |
 | `--cores N` | Number of CPU cores | `2` |
 | `--bridge NAME` | Proxmox network bridge | `vmbr0` |
-| `--storage NAME` | Target storage for the imported disk | `local-lvm` |
+| `--storage NAME` | Target storage for the imported disk | `local` |
 | `--efi-storage NAME` | Storage for the EFI disk | same as `--storage` |
 | `--cpu TYPE` | Proxmox CPU type | `host` |
 | `--machine TYPE` | Proxmox machine type | `q35` |
-| `--disk-interface NAME` | Boot disk slot such as `scsi0`, `sata0`, or `virtio0` | `scsi0` |
+| `--disk-interface NAME` | Boot disk slot such as `scsi0`, `sata0`, or `virtio0` | `sata0` |
 | `--usb VID:PID` | Attach a USB device by vendor/product ID | none |
 | `--usb2` | Attach the USB device as USB 2.0 instead of USB 3.0 | USB 3.0 |
 | `--usb3` | Force USB 3.0 passthrough | USB 3.0 |
@@ -152,8 +152,8 @@ sudo ./pve-create-cube-os.sh \
   --download-latest \
   --vmid 951 \
   --name cube-os-test \
-  --storage local-lvm \
-  --efi-storage local-lvm \
+  --storage local \
+  --efi-storage local \
   --yes
 ```
 
@@ -225,6 +225,7 @@ Then:
 - CUBE OS is configured here for UEFI boot using OVMF.
 - The script disables pre-enrolled EFI keys.
 - Bridged networking is recommended for local discovery and `cube.local` access.
+- `local` storage and `sata0` are the safest defaults for the current CUBE OS Proxmox image.
 - USB passthrough can be used for Zigbee or similar adapters.
 - You must choose exactly one image source: `--image`, `--archive`, `--download-latest` / `--release`, or `--download-url`.
 - With no arguments on a TTY, the script drops into guided interactive mode.

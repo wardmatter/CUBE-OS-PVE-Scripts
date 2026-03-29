@@ -8,10 +8,10 @@ DEFAULT_NAME="cube-os"
 DEFAULT_MEMORY="4096"
 DEFAULT_CORES="2"
 DEFAULT_BRIDGE="vmbr0"
-DEFAULT_STORAGE="local-lvm"
+DEFAULT_STORAGE="local"
 DEFAULT_CPU_TYPE="host"
 DEFAULT_MACHINE="q35"
-DEFAULT_DISK_INTERFACE="scsi0"
+DEFAULT_DISK_INTERFACE="sata0"
 DEFAULT_DOWNLOAD_DIR="/var/lib/vz/template/cache"
 DEFAULT_BIOS="ovmf"
 DEFAULT_SCSIHW="virtio-scsi-pci"
@@ -88,11 +88,11 @@ VM options:
   --memory MB                Memory in MB. Default: 4096
   --cores N                  CPU cores. Default: 2
   --bridge NAME              Proxmox bridge. Default: vmbr0
-  --storage NAME             Target VM disk storage. Default: local-lvm
+  --storage NAME             Target VM disk storage. Default: local
   --efi-storage NAME         EFI disk storage. Default: same as --storage
   --cpu TYPE                 CPU type. Default: host
   --machine TYPE             Machine type. Default: q35
-  --disk-interface NAME      Boot disk slot. Default: scsi0
+  --disk-interface NAME      Boot disk slot. Default: sata0
 
 USB options:
   --usb VID:PID              Add a USB device by vendor/product ID.
@@ -115,7 +115,7 @@ Flow / UX options:
 
 Examples:
   pve-create-cube-os.sh --download-latest --yes --start
-  pve-create-cube-os.sh --image /root/sdcard.vmdk --vmid 950 --storage local-lvm
+  pve-create-cube-os.sh --image /root/sdcard.vmdk --vmid 950 --storage local
   pve-create-cube-os.sh --archive /root/sdcard.vmdk.xz --usb 10c4:ea60
   pve-create-cube-os.sh --release v2.5.2 --bridge vmbr1 --memory 8192 --cores 4
   pve-create-cube-os.sh --interactive
@@ -677,7 +677,7 @@ create_vm() {
   next_step "Configuring boot disk and console"
   run_cmd qm set "$VMID" --"${DISK_INTERFACE}" "${STORAGE}:vm-${VMID}-disk-0"
   run_cmd qm set "$VMID" --boot "order=${DISK_INTERFACE}"
-  run_cmd qm set "$VMID" --serial0 socket --vga serial0
+  run_cmd qm set "$VMID" --vga std
 }
 
 attach_usb_if_requested() {
