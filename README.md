@@ -89,7 +89,7 @@ Launch the guided setup:
 sudo ./pve-create-cube-os.sh --interactive
 ```
 
-When `whiptail` is available, interactive mode now opens a Proxmox helper-style menu with `default` and `advanced` setup paths.
+When `whiptail` is available, interactive mode opens a Proxmox helper-style menu with `default` and `advanced` setup paths. Without `whiptail`, it falls back to numbered text-based selectors so you can still choose storage, bridge, release source, and other VM options.
 
 Preview the resolved configuration without making changes:
 
@@ -126,7 +126,7 @@ sudo ./pve-create-cube-os.sh --download-latest --dry-run --show-config
 | `--usb VID:PID` | Attach a USB device by vendor/product ID | none |
 | `--usb2` | Attach the USB device as USB 2.0 instead of USB 3.0 | USB 3.0 |
 | `--usb3` | Force USB 3.0 passthrough | USB 3.0 |
-| `--interactive` | Run a guided setup with prompts | off |
+| `--interactive` | Run a guided setup with menus or numbered prompts | off |
 | `--yes` | Skip the final confirmation prompt | off |
 | `--start` | Start the VM after creation | off |
 | `--dry-run` | Show the planned work without creating the VM | off |

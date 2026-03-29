@@ -442,6 +442,44 @@ prompt_yes_no() {
   esac
 }
 
+prompt_choice() {
+  local title="$1"
+  local prompt="$2"
+  local default_key="$3"
+  shift 3
+  local options=("$@")
+  local option_count=$((${#options[@]} / 2))
+  local i=0
+  local default_index=1
+  local input=""
+  local selected_index=""
+
+  printf '\n%s\n' "$title" >/dev/tty
+  printf '%s\n' "$prompt" >/dev/tty
+
+  while [[ $i -lt ${#options[@]} ]]; do
+    local key="${options[$i]}"
+    local label="${options[$((i + 1))]}"
+    local display_index=$((i / 2 + 1))
+    printf '  %d) %s\n' "$display_index" "$label" >/dev/tty
+    if [[ "$key" == "$default_key" ]]; then
+      default_index="$display_index"
+    fi
+    i=$((i + 2))
+  done
+
+  while true; do
+    read -r -p "Select an option [${default_index}]: " input </dev/tty || true
+    input="${input:-$default_index}"
+    if [[ "$input" =~ ^[0-9]+$ ]] && (( input >= 1 && input <= option_count )); then
+      selected_index=$(((input - 1) * 2))
+      printf '%s\n' "${options[$selected_index]}"
+      return 0
+    fi
+    printf 'Invalid selection. Choose a number between 1 and %d.\n' "$option_count" >/dev/tty
+  done
+}
+
 menu_choice() {
   local title="$1"
   local prompt="$2"
@@ -519,6 +557,46 @@ choose_bridge_menu() {
   fi
 
   menu_choice "$title" "$prompt" "${options[@]}" || return 1
+}
+
+choose_storage_prompt() {
+  local title="$1"
+  local prompt="$2"
+  local default_value="$3"
+  local options=()
+  local storage=""
+
+  while IFS= read -r storage; do
+    [[ -n "$storage" ]] || continue
+    options+=("$storage" "$storage")
+  done < <(image_storage_names)
+
+  if [[ ${#options[@]} -eq 0 ]]; then
+    printf '%s\n' "$default_value"
+    return
+  fi
+
+  prompt_choice "$title" "$prompt" "$default_value" "${options[@]}"
+}
+
+choose_bridge_prompt() {
+  local title="$1"
+  local prompt="$2"
+  local default_value="$3"
+  local options=()
+  local bridge=""
+
+  while IFS= read -r bridge; do
+    [[ -n "$bridge" ]] || continue
+    options+=("$bridge" "$bridge")
+  done < <(bridge_names)
+
+  if [[ ${#options[@]} -eq 0 ]]; then
+    printf '%s\n' "$default_value"
+    return
+  fi
+
+  prompt_choice "$title" "$prompt" "$default_value" "${options[@]}"
 }
 
 apply_default_interactive_settings() {
@@ -633,6 +711,7 @@ run_prompt_setup() {
 
   local auto_vmid
   local default_storage
+  local setup_mode
   auto_vmid="$(get_next_vmid)"
   default_storage="$(detect_default_storage)"
 
@@ -642,33 +721,40 @@ run_prompt_setup() {
   printf '\nAvailable bridge interfaces:\n'
   list_bridges || true
 
-  printf '\nChoose the CUBE OS image source:\n'
-  printf '  1) Download latest release\n'
-  printf '  2) Download a specific release tag\n'
-  printf '  3) Use a local .vmdk image\n'
-  printf '  4) Use a local .vmdk.xz archive\n'
-  printf '  5) Download from a custom URL\n'
+  setup_mode="$(prompt_choice "Setup Mode" "Choose a setup mode" "default" \
+    "default" "Use latest CUBE OS release with recommended defaults" \
+    "advanced" "Choose release, storage, bridge, and VM settings")"
+
+  if [[ "$setup_mode" == "default" ]]; then
+    apply_default_interactive_settings
+    ASSUME_YES="1"
+    return
+  fi
 
   local source_choice=""
-  read -r -p "Select an option [1]: " source_choice </dev/tty || true
-  source_choice="${source_choice:-1}"
+  source_choice="$(prompt_choice "Image Source" "Choose the CUBE OS image source" "latest" \
+    "latest" "Download latest release" \
+    "release" "Download a specific release tag" \
+    "image" "Use a local .vmdk image" \
+    "archive" "Use a local .vmdk.xz archive" \
+    "url" "Download from a custom URL")"
 
   case "$source_choice" in
-    1)
+    latest)
       DOWNLOAD_LATEST="1"
       RELEASE_TAG="latest"
       ;;
-    2)
+    release)
       DOWNLOAD_LATEST="1"
       RELEASE_TAG="$(prompt_value "Release tag" "$RELEASE_TAG")"
       ;;
-    3)
+    image)
       IMAGE_PATH="$(prompt_value "Local .vmdk path" "/root/${DEFAULT_IMAGE_NAME}")"
       ;;
-    4)
+    archive)
       ARCHIVE_PATH="$(prompt_value "Local .vmdk.xz path" "/root/${DEFAULT_ARCHIVE_NAME}")"
       ;;
-    5)
+    url)
       DOWNLOAD_URL="$(prompt_value "Custom archive URL" "$DOWNLOAD_URL")"
       ;;
     *)
@@ -680,19 +766,29 @@ run_prompt_setup() {
   NAME="$(prompt_value "VM name" "$NAME")"
   MEMORY="$(prompt_value "Memory (MB)" "$MEMORY")"
   CORES="$(prompt_value "CPU cores" "$CORES")"
-  STORAGE="$(prompt_value "Disk storage" "${STORAGE:-$default_storage}")"
-  EFI_STORAGE="$(prompt_value "EFI storage" "${EFI_STORAGE:-$STORAGE}")"
-  BRIDGE="$(prompt_value "Bridge" "$BRIDGE")"
-  CPU_TYPE="$(prompt_value "CPU type" "$CPU_TYPE")"
-  MACHINE="$(prompt_value "Machine type" "$MACHINE")"
-  DISK_INTERFACE="$(prompt_value "Disk interface" "$DISK_INTERFACE")"
+  STORAGE="$(choose_storage_prompt "Disk Storage" "Choose the target storage for the imported disk" "${STORAGE:-$default_storage}")"
+  EFI_STORAGE="$(choose_storage_prompt "EFI Storage" "Choose the target storage for the EFI disk" "${EFI_STORAGE:-$STORAGE}")"
+  BRIDGE="$(choose_bridge_prompt "Network Bridge" "Choose the Proxmox bridge" "$BRIDGE")"
+  CPU_TYPE="$(prompt_choice "CPU Type" "Choose the CPU model" "$CPU_TYPE" \
+    "host" "host" \
+    "x86-64-v2-AES" "x86-64-v2-AES" \
+    "kvm64" "kvm64")"
+  MACHINE="$(prompt_choice "Machine Type" "Choose the machine type" "$MACHINE" \
+    "q35" "q35" \
+    "i440fx" "i440fx")"
+  DISK_INTERFACE="$(prompt_choice "Disk Interface" "Choose the boot disk slot" "$DISK_INTERFACE" \
+    "sata0" "sata0" \
+    "scsi0" "scsi0" \
+    "virtio0" "virtio0")"
   DOWNLOAD_DIR="$(prompt_value "Download/extract directory" "$DOWNLOAD_DIR")"
 
   if prompt_yes_no "Attach a USB device?" "n"; then
     local usb_id
     usb_id="$(prompt_value "USB VID:PID" "10c4:ea60")"
     IFS=':' read -r USB_VENDOR_ID USB_PRODUCT_ID <<<"$usb_id"
-    if prompt_yes_no "Use USB 3.0?" "y"; then
+    if [[ "$(prompt_choice "USB Mode" "Choose the USB passthrough mode" "usb3" \
+      "usb3" "USB 3.0" \
+      "usb2" "USB 2.0")" == "usb3" ]]; then
       USB3="1"
     else
       USB3="0"
