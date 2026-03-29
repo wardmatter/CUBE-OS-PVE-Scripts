@@ -44,7 +44,7 @@ By default, the script creates a VM with:
 - `4096` MB RAM
 - `2` CPU cores
 - Network bridge `vmbr0`
-- Disk storage `local`
+- Disk storage on the first Proxmox storage that supports VM images
 - CPU type `host`
 - Machine type `q35`
 - Boot disk on `sata0`
@@ -89,6 +89,8 @@ Launch the guided setup:
 sudo ./pve-create-cube-os.sh --interactive
 ```
 
+When `whiptail` is available, interactive mode now opens a Proxmox helper-style menu with `default` and `advanced` setup paths.
+
 Preview the resolved configuration without making changes:
 
 ```bash
@@ -116,7 +118,7 @@ sudo ./pve-create-cube-os.sh --download-latest --dry-run --show-config
 | `--memory MB` | Memory in MB | `4096` |
 | `--cores N` | Number of CPU cores | `2` |
 | `--bridge NAME` | Proxmox network bridge | `vmbr0` |
-| `--storage NAME` | Target storage for the imported disk | `local` |
+| `--storage NAME` | Target storage for the imported disk | first image-capable storage |
 | `--efi-storage NAME` | Storage for the EFI disk | same as `--storage` |
 | `--cpu TYPE` | Proxmox CPU type | `host` |
 | `--machine TYPE` | Proxmox machine type | `q35` |
@@ -225,7 +227,8 @@ Then:
 - CUBE OS is configured here for UEFI boot using OVMF.
 - The script disables pre-enrolled EFI keys.
 - Bridged networking is recommended for local discovery and `cube.local` access.
-- `local` storage and `sata0` are the safest defaults for the current CUBE OS Proxmox image.
+- `sata0` is the safest boot disk default for the current CUBE OS Proxmox image.
+- The script now auto-selects the first storage that supports VM images, because many Proxmox hosts use `local` for ISOs/templates only.
 - USB passthrough can be used for Zigbee or similar adapters.
 - You must choose exactly one image source: `--image`, `--archive`, `--download-latest` / `--release`, or `--download-url`.
 - With no arguments on a TTY, the script drops into guided interactive mode.

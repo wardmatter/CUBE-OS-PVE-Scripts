@@ -8,7 +8,7 @@ DEFAULT_NAME="cube-os"
 DEFAULT_MEMORY="4096"
 DEFAULT_CORES="2"
 DEFAULT_BRIDGE="vmbr0"
-DEFAULT_STORAGE="local"
+DEFAULT_STORAGE=""
 DEFAULT_CPU_TYPE="host"
 DEFAULT_MACHINE="q35"
 DEFAULT_DISK_INTERFACE="sata0"
@@ -88,7 +88,7 @@ VM options:
   --memory MB                Memory in MB. Default: 4096
   --cores N                  CPU cores. Default: 2
   --bridge NAME              Proxmox bridge. Default: vmbr0
-  --storage NAME             Target VM disk storage. Default: local
+  --storage NAME             Target VM disk storage. Default: first image-capable storage
   --efi-storage NAME         EFI disk storage. Default: same as --storage
   --cpu TYPE                 CPU type. Default: host
   --machine TYPE             Machine type. Default: q35
@@ -115,7 +115,7 @@ Flow / UX options:
 
 Examples:
   pve-create-cube-os.sh --download-latest --yes --start
-  pve-create-cube-os.sh --image /root/sdcard.vmdk --vmid 950 --storage local
+  pve-create-cube-os.sh --image /root/sdcard.vmdk --vmid 950 --storage local-lvm
   pve-create-cube-os.sh --archive /root/sdcard.vmdk.xz --usb 10c4:ea60
   pve-create-cube-os.sh --release v2.5.2 --bridge vmbr1 --memory 8192 --cores 4
   pve-create-cube-os.sh --interactive
@@ -197,6 +197,51 @@ list_bridges() {
 list_usb_devices() {
   require_command lsusb
   lsusb
+}
+
+interactive_menu_supported() {
+  command_exists whiptail && [[ -t 0 && -t 1 ]]
+}
+
+storage_names() {
+  pvesm status | awk 'NR > 1 {print $1}'
+}
+
+image_storage_names() {
+  pvesm status -content images | awk 'NR > 1 {print $1}'
+}
+
+bridge_names() {
+  ip -o link show | awk -F': ' '{print $2}' | grep -E '^(vmbr|br|bond)' || true
+}
+
+storage_supports_images() {
+  image_storage_names | grep -Fx "$1" >/dev/null 2>&1
+}
+
+detect_default_storage() {
+  local preferred=(
+    "local-lvm"
+    "local-zfs"
+    "local"
+  )
+  local storage=""
+  local candidate=""
+
+  for candidate in "${preferred[@]}"; do
+    if storage_supports_images "$candidate"; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+
+  while IFS= read -r storage; do
+    [[ -n "$storage" ]] || continue
+    printf '%s\n' "$storage"
+    return
+  done < <(image_storage_names)
+
+  fail "No Proxmox storage with 'images' content is available for VM disks"
 }
 
 get_next_vmid() {
@@ -397,16 +442,202 @@ prompt_yes_no() {
   esac
 }
 
-run_interactive_setup() {
+menu_choice() {
+  local title="$1"
+  local prompt="$2"
+  shift 2
+  whiptail --backtitle "CUBE OS Proxmox Installer" --title "$title" --menu "$prompt" 20 78 10 "$@" 3>&1 1>&2 2>&3
+}
+
+input_box() {
+  local title="$1"
+  local prompt="$2"
+  local default_value="$3"
+  whiptail --backtitle "CUBE OS Proxmox Installer" --title "$title" --inputbox "$prompt" 10 78 "$default_value" 3>&1 1>&2 2>&3
+}
+
+yesno_box() {
+  local title="$1"
+  local prompt="$2"
+  if whiptail --backtitle "CUBE OS Proxmox Installer" --title "$title" --yesno "$prompt" 10 78; then
+    return 0
+  fi
+  return 1
+}
+
+choose_storage_menu() {
+  local title="$1"
+  local prompt="$2"
+  local default_value="$3"
+  local options=()
+  local first_storage=""
+  local storage=""
+
+  while IFS= read -r storage; do
+    [[ -n "$storage" ]] || continue
+    if [[ -z "$first_storage" ]]; then
+      first_storage="$storage"
+    fi
+    options+=("$storage" "Available Proxmox storage")
+  done < <(image_storage_names)
+
+  if [[ ${#options[@]} -eq 0 ]]; then
+    printf '%s\n' "$default_value"
+    return
+  fi
+
+  if [[ -z "$default_value" ]]; then
+    default_value="$first_storage"
+  fi
+
+  menu_choice "$title" "$prompt" "${options[@]}" || return 1
+}
+
+choose_bridge_menu() {
+  local title="$1"
+  local prompt="$2"
+  local default_value="$3"
+  local options=()
+  local first_bridge=""
+  local bridge=""
+
+  while IFS= read -r bridge; do
+    [[ -n "$bridge" ]] || continue
+    if [[ -z "$first_bridge" ]]; then
+      first_bridge="$bridge"
+    fi
+    options+=("$bridge" "Bridge interface")
+  done < <(bridge_names)
+
+  if [[ ${#options[@]} -eq 0 ]]; then
+    printf '%s\n' "$default_value"
+    return
+  fi
+
+  if [[ -z "$default_value" ]]; then
+    default_value="$first_bridge"
+  fi
+
+  menu_choice "$title" "$prompt" "${options[@]}" || return 1
+}
+
+apply_default_interactive_settings() {
+  VMID="${VMID:-$(get_next_vmid)}"
+  DOWNLOAD_LATEST="1"
+  RELEASE_TAG="latest"
+  NAME="${NAME:-$DEFAULT_NAME}"
+  MEMORY="${MEMORY:-$DEFAULT_MEMORY}"
+  CORES="${CORES:-$DEFAULT_CORES}"
+  STORAGE="${STORAGE:-$(detect_default_storage)}"
+  EFI_STORAGE="${EFI_STORAGE:-$STORAGE}"
+  BRIDGE="${BRIDGE:-$DEFAULT_BRIDGE}"
+  CPU_TYPE="${CPU_TYPE:-$DEFAULT_CPU_TYPE}"
+  MACHINE="${MACHINE:-$DEFAULT_MACHINE}"
+  DISK_INTERFACE="${DISK_INTERFACE:-$DEFAULT_DISK_INTERFACE}"
+  START_VM="1"
+}
+
+run_whiptail_setup() {
+  local auto_vmid
+  local mode=""
+  auto_vmid="$(get_next_vmid)"
+
+  if ! yesno_box "CUBE OS VM" "This will create a new CUBE OS VM on this Proxmox host. Continue?"; then
+    fail "Cancelled by user"
+  fi
+
+  mode="$(menu_choice "Setup Mode" "Choose a setup mode" \
+    "default" "Use latest CUBE OS release with recommended defaults" \
+    "advanced" "Choose release, storage, bridge, and VM settings")" || fail "Cancelled by user"
+
+  if [[ "$mode" == "default" ]]; then
+    apply_default_interactive_settings
+    ASSUME_YES="1"
+    return
+  fi
+
+  local source_choice=""
+  source_choice="$(menu_choice "Image Source" "Choose the CUBE OS image source" \
+    "latest" "Download the latest GitHub release" \
+    "release" "Choose a specific GitHub release tag" \
+    "image" "Use a local extracted .vmdk image" \
+    "archive" "Use a local .vmdk.xz archive" \
+    "url" "Download a .vmdk.xz archive from a custom URL")" || fail "Cancelled by user"
+
+  case "$source_choice" in
+    latest)
+      DOWNLOAD_LATEST="1"
+      RELEASE_TAG="latest"
+      ;;
+    release)
+      RELEASE_TAG="$(input_box "Release Tag" "Enter the GitHub release tag to install" "$RELEASE_TAG")" || fail "Cancelled by user"
+      DOWNLOAD_LATEST="1"
+      ;;
+    image)
+      IMAGE_PATH="$(input_box "Local Image" "Path to the extracted .vmdk image" "/root/${DEFAULT_IMAGE_NAME}")" || fail "Cancelled by user"
+      ;;
+    archive)
+      ARCHIVE_PATH="$(input_box "Local Archive" "Path to the .vmdk.xz archive" "/root/${DEFAULT_ARCHIVE_NAME}")" || fail "Cancelled by user"
+      ;;
+    url)
+      DOWNLOAD_URL="$(input_box "Download URL" "Direct URL to a .vmdk.xz archive" "$DOWNLOAD_URL")" || fail "Cancelled by user"
+      ;;
+  esac
+
+  VMID="$(input_box "VM ID" "Set the VM ID" "${VMID:-$auto_vmid}")" || fail "Cancelled by user"
+  NAME="$(input_box "VM Name" "Set the VM name" "$NAME")" || fail "Cancelled by user"
+  STORAGE="$(choose_storage_menu "Disk Storage" "Choose the target storage for the imported disk" "$STORAGE")" || fail "Cancelled by user"
+  EFI_STORAGE="$(choose_storage_menu "EFI Storage" "Choose the target storage for the EFI disk" "${EFI_STORAGE:-$STORAGE}")" || fail "Cancelled by user"
+  BRIDGE="$(choose_bridge_menu "Network Bridge" "Choose the Proxmox bridge" "$BRIDGE")" || fail "Cancelled by user"
+  MEMORY="$(input_box "Memory" "Memory in MB" "$MEMORY")" || fail "Cancelled by user"
+  CORES="$(input_box "CPU Cores" "Number of vCPU cores" "$CORES")" || fail "Cancelled by user"
+  CPU_TYPE="$(menu_choice "CPU Type" "Choose the CPU model" \
+    "host" "Recommended on most Proxmox hosts" \
+    "x86-64-v2-AES" "Portable virtual CPU with AES support" \
+    "kvm64" "Conservative compatibility option")" || fail "Cancelled by user"
+  MACHINE="$(menu_choice "Machine Type" "Choose the machine type" \
+    "q35" "Recommended modern PCIe machine type" \
+    "i440fx" "Legacy machine type")" || fail "Cancelled by user"
+  DISK_INTERFACE="$(menu_choice "Disk Interface" "Choose the boot disk slot" \
+    "sata0" "Recommended for the current CUBE OS image" \
+    "scsi0" "VirtIO SCSI disk" \
+    "virtio0" "VirtIO block disk")" || fail "Cancelled by user"
+  DOWNLOAD_DIR="$(input_box "Download Directory" "Directory for downloads and extracted images" "$DOWNLOAD_DIR")" || fail "Cancelled by user"
+
+  if yesno_box "USB Passthrough" "Would you like to attach a USB device, such as a Zigbee dongle?"; then
+    local usb_id=""
+    usb_id="$(input_box "USB Device" "Enter the USB vendor/product ID in VID:PID format" "10c4:ea60")" || fail "Cancelled by user"
+    IFS=':' read -r USB_VENDOR_ID USB_PRODUCT_ID <<<"$usb_id"
+    if yesno_box "USB 3.0" "Use USB 3.0 passthrough for this device?"; then
+      USB3="1"
+    else
+      USB3="0"
+    fi
+  fi
+
+  if yesno_box "Auto Start" "Start the VM automatically when provisioning is complete?"; then
+    START_VM="1"
+  else
+    START_VM="0"
+  fi
+
+  if yesno_box "Skip Confirmation" "Skip the final confirmation screen for this run?"; then
+    ASSUME_YES="1"
+  fi
+}
+
+run_prompt_setup() {
   print_banner
   printf '\n'
   log_info "Guided mode enabled. Press Enter to accept the defaults."
 
   local auto_vmid
+  local default_storage
   auto_vmid="$(get_next_vmid)"
+  default_storage="$(detect_default_storage)"
 
-  printf '\nAvailable storage targets:\n'
-  list_storages || true
+  printf '\nAvailable VM image storage targets:\n'
+  image_storage_names || true
 
   printf '\nAvailable bridge interfaces:\n'
   list_bridges || true
@@ -416,6 +647,7 @@ run_interactive_setup() {
   printf '  2) Download a specific release tag\n'
   printf '  3) Use a local .vmdk image\n'
   printf '  4) Use a local .vmdk.xz archive\n'
+  printf '  5) Download from a custom URL\n'
 
   local source_choice=""
   read -r -p "Select an option [1]: " source_choice || true
@@ -436,6 +668,9 @@ run_interactive_setup() {
     4)
       ARCHIVE_PATH="$(prompt_value "Local .vmdk.xz path" "/root/${DEFAULT_ARCHIVE_NAME}")"
       ;;
+    5)
+      DOWNLOAD_URL="$(prompt_value "Custom archive URL" "$DOWNLOAD_URL")"
+      ;;
     *)
       fail "Invalid source choice: $source_choice"
       ;;
@@ -445,7 +680,7 @@ run_interactive_setup() {
   NAME="$(prompt_value "VM name" "$NAME")"
   MEMORY="$(prompt_value "Memory (MB)" "$MEMORY")"
   CORES="$(prompt_value "CPU cores" "$CORES")"
-  STORAGE="$(prompt_value "Disk storage" "$STORAGE")"
+  STORAGE="$(prompt_value "Disk storage" "${STORAGE:-$default_storage}")"
   EFI_STORAGE="$(prompt_value "EFI storage" "${EFI_STORAGE:-$STORAGE}")"
   BRIDGE="$(prompt_value "Bridge" "$BRIDGE")"
   CPU_TYPE="$(prompt_value "CPU type" "$CPU_TYPE")"
@@ -472,6 +707,14 @@ run_interactive_setup() {
 
   if prompt_yes_no "Skip final confirmation in future runs?" "y"; then
     ASSUME_YES="1"
+  fi
+}
+
+run_interactive_setup() {
+  if interactive_menu_supported; then
+    run_whiptail_setup
+  else
+    run_prompt_setup
   fi
 }
 
@@ -505,6 +748,12 @@ validate_args() {
 resolve_defaults() {
   if [[ -z "$VMID" ]]; then
     VMID="$(get_next_vmid)"
+  fi
+  if [[ -z "$STORAGE" ]]; then
+    STORAGE="$(detect_default_storage)"
+  fi
+  if [[ -z "$EFI_STORAGE" ]]; then
+    EFI_STORAGE="$STORAGE"
   fi
 }
 
@@ -597,7 +846,9 @@ preflight_checks() {
   fi
 
   storage_exists "$STORAGE" || fail "Storage not found in Proxmox: $STORAGE"
+  storage_supports_images "$STORAGE" || fail "Storage '$STORAGE' does not support VM images. Choose a storage listed by: pvesm status -content images"
   storage_exists "$EFI_STORAGE" || fail "EFI storage not found in Proxmox: $EFI_STORAGE"
+  storage_supports_images "$EFI_STORAGE" || fail "EFI storage '$EFI_STORAGE' does not support VM images. Choose a storage listed by: pvesm status -content images"
   bridge_exists "$BRIDGE" || fail "Network bridge not found: $BRIDGE"
   vmid_exists "$VMID" && fail "VMID $VMID already exists"
 
